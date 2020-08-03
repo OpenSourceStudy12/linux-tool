@@ -1,13 +1,14 @@
 # !/bin/bash
 
-DIR_OUT_FILE=.filterdir
+#DIR_OUT_FILE=.filterdir
 DIR_OUT_OFILE=.odir
 FILTER_VALUE=
-FILTER_FILE="*.c *.o *.dtb"
+FILTER_FILE="*.o *.ko *.dtb"
 WORKSPACE=$2/
 
 function file_exist()
 {
+	local file=
 	for file in $FILTER_FILE
 	do
 		res=`find $1 -maxdepth 1 -name $file`
@@ -20,25 +21,35 @@ function file_exist()
 
 function filter_dir()
 {
-	DIR_EXIT=
-	for file in `ls "$1"`
-	do
+	local FILE_EXIT=0
+	local file=
+
+	for file in `ls "$1"`;do
 		if [ -d "$1$file" ] && [ "$file" != "include" ];then
 			filter_dir "$1$file/"
-			DIR_EXIT=1
+			if [ $? -eq 1 ];then
+				FILE_EXIT=1
+			fi
+
 		fi
 	done
+
 	pro_dir=$1
 	pro_dir=${pro_dir#*$WORKSPACE}
 	file_exist $1
-	if [ $? -ne 1 ];then
-		if [ -z "$DIR_EXIT" ];then
-			echo "$pro_dir" >> $DIR_OUT_FILE
-			FILTER_VALUE+="$pro_dir|"
-		fi
+
+	if [ $? -eq 1 ];then
+		FILE_EXIT=1
+	fi
+
+	if [ $FILE_EXIT -ne 1 ];then
+		# echo "$pro_dir" >> $DIR_OUT_FILE
+		FILTER_VALUE+="$pro_dir|"
 	else
 		echo "$pro_dir" >> $DIR_OUT_OFILE
 	fi
+#	echo $1 $FILE_EXIT >> .out
+	return $FILE_EXIT
 }
 
 function filter_cfile()
@@ -57,10 +68,36 @@ function filter_cfile()
 	done < $DIR_OUT_OFILE
 }
 
-[ -f "$DIR_OUT_FILE" ] && rm $DIR_OUT_FILE; rm $DIR_OUT_OFILE; rm .out 
-[ -z "$1" ] && exit
+([ -z "$1" ] || [ -z "$2" ]) && echo " \$1 project path, \$2 project name" && exit
+
+rm $DIR_OUT_OFILE .$2_cproject > /dev/null
 
 filter_dir $1
 filter_cfile $1
 echo $FILTER_VALUE > .$2_out
-#rm $DIR_OUT_FILE; rm $DIR_OUT_OFILE;
+
+FILTER_VALUE+="firmware/|scripts/|tools/|doc/Documentation|samples|test|Debug"
+
+# filter unused file, can display in eclipse
+[ -z $FILTER_VALUE ] && echo "filer out file no exist" && exit
+
+if [ -f $1/.cproject ];then
+	while read line
+	do
+		echo $line | grep "excluding=" > /dev/null
+		if [ $? -ne 0 ];then
+			echo $line >> .$2_cproject
+		else
+			cat >> .$2_cproject << EOF
+						<entry excluding="$FILTER_VALUE" flags="VALUE_WORKSPACE_PATH" kind="sourcePath" name=""/>
+EOF
+		fi
+	done < $1/.cproject
+	cp .$2_cproject $1/.cproject
+fi
+
+# filter unused file, no display in eclipse
+if [ -f $1/.project ];then
+	sed -i 's/<arguments>1.0-name-matches-false-true-.*/<arguments>1.0-name-matches-false-true-.*\.o|.*\.ko|.*\.order|.*builtin|Makefile|.*config<\/arguments>/' $1/.project
+	sed -n 's/<arguments>1.0-projectRelativePath-matches-false-true-.*/<arguments>1.0-projectRelativePath-matches-false-true-tools|scripts|samples<\/arguments>/' $1/.project
+fi
